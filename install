@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""Install or remove the user-scoped Voyager integration."""
+import argparse
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+
+ROOT = Path(__file__).resolve().parent
+HOME = Path.home()
+CONFIG = Path(os.environ.get('XDG_CONFIG_HOME', HOME / '.config'))
+DATA = Path(os.environ.get('XDG_DATA_HOME', HOME / '.local/share'))
+BEGIN = '-- BEGIN voyager-layer-auto\n'
+END = '-- END voyager-layer-auto\n'
+MARKER = CONFIG / 'voyager-layer/installed'
+
+
+def write(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not MARKER.exists() and path.exists() and path.read_text() != text:
+        backup = path.with_name(path.name + '.before-voyager-layer-auto')
+        if not backup.exists():
+            shutil.copy2(path, backup)
+    path.write_text(text)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--layer', type=int, help='Zero-based Linux base layer number')
+    parser.add_argument('--uninstall', action='store_true')
+    parser.add_argument('--no-start', action='store_true', help='Write files without contacting systemd or Hyprland')
+    args = parser.parse_args()
+    if os.getuid() == 0:
+        parser.error('Run as your desktop user, without sudo')
+    if not args.uninstall and (args.layer is None or not 0 <= args.layer <= 31):
+        parser.error('Choose --layer between 0 and 31')
+    hypr = CONFIG / 'hypr/hyprland.lua'
+    if not args.uninstall and not hypr.exists():
+        parser.error('Requires an existing Omarchy Hyprland Lua configuration')
+    binaries = [HOME / '.local/bin' / name for name in ('voyager-layer-auto', 'keymapp-show')]
+    unit = CONFIG / 'systemd/user/voyager-layer.service'
+    desktop = DATA / 'applications/keymapp.desktop'
+    snippet = CONFIG / 'voyager-layer/hyprland.lua'
+    config = CONFIG / 'voyager-layer/config.json'
+    if args.uninstall:
+        if not args.no_start:
+            subprocess.run(['systemctl', '--user', 'disable', '--now', unit.name], check=True)
+        for path in [*binaries, unit, desktop, snippet]:
+            backup = path.with_name(path.name + '.before-voyager-layer-auto')
+            path.unlink(missing_ok=True)
+            if backup.exists():
+                backup.rename(path)
+        # Keep config.json so a reinstall preserves the user's chosen layer.
+    else:
+        for name in ('keymapp', 'kontroll', 'hyprctl'):
+            if not (shutil.which(name) or (HOME / '.local/bin' / name).exists()):
+                parser.error(f'Missing prerequisite: {name}')
+        for path in binaries:
+            write(path, (ROOT / 'bin' / path.name).read_text())
+            path.chmod(0o755)
+        write(unit, (ROOT / unit.name).read_text())
+        settings = json.loads(config.read_text()) if config.exists() else {'vendor': '3297', 'product': '1977'}
+        settings['layer'] = args.layer
+        write(config, json.dumps(settings, indent=2) + '\n')
+        write(snippet, 'o.window("^keymapp$", { workspace = "special:keymapp silent", no_initial_focus = true })\n')
+        executable = str(binaries[1]).replace('\\', '\\\\').replace('"', '\\"').replace('`', '\\`').replace('$', '\\$').replace('%', '%%')
+        write(desktop, '[Desktop Entry]\nType=Application\nName=Keymapp\n'
+              f'Exec="{executable}"\nIcon=keymapp\nTerminal=false\nStartupWMClass=keymapp\nCategories=Settings;HardwareSettings;\n')
+    if hypr.exists():
+        text = hypr.read_text()
+        if BEGIN in text:
+            start = text.index(BEGIN)
+            end = text.index(END, start) + len(END)
+            text = text[:start] + text[end:]
+        if not args.uninstall:
+            text = text.rstrip() + '\n\n' + BEGIN + f'dofile({json.dumps(str(snippet))})\n' + END
+        write(hypr, text)
+    if args.uninstall:
+        MARKER.unlink(missing_ok=True)
+    else:
+        MARKER.write_text('voyager-layer-auto\n')
+    if not args.no_start:
+        subprocess.run(['hyprctl', 'reload'], check=True)
+        errors = subprocess.check_output(['hyprctl', 'configerrors'], text=True).strip()
+        if errors:
+            raise SystemExit(f'Hyprland configuration errors; service not started:\n{errors}')
+        subprocess.run(['systemctl', '--user', 'daemon-reload'], check=True)
+        if not args.uninstall:
+            subprocess.run(['systemctl', '--user', 'enable', unit.name], check=True)
+            subprocess.run(['systemctl', '--user', 'restart', unit.name], check=True)
+        if shutil.which('update-desktop-database'):
+            subprocess.run(['update-desktop-database', str(DATA / 'applications')], check=True)
+    print('Uninstalled; layer configuration retained.' if args.uninstall else 'Installed. Enable the API in Keymapp settings before use.')
+
+
+if __name__ == '__main__':
+    main()

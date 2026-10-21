@@ -1,0 +1,90 @@
+#!/usr/bin/python3
+"""Select one base layer per USB connection, entirely as the logged-in user."""
+import json
+import fcntl
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import time
+
+HOME = Path.home()
+CONFIG = Path(os.environ.get('XDG_CONFIG_HOME', HOME / '.config')) / 'voyager-layer/config.json'
+KONTROLL = shutil.which('kontroll') or str(HOME / '.local/bin/kontroll')
+
+
+def run(*args):
+    try:
+        return subprocess.run(args, capture_output=True, text=True, timeout=5)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(args, 124, '', 'Timed out')
+
+
+def devices(config):
+    found = set()
+    for device in Path('/sys/bus/usb/devices').glob('*'):
+        try:
+            if ((device / 'idVendor').read_text().strip() == config['vendor']
+                    and (device / 'idProduct').read_text().strip() == config['product']):
+                found.add((device.name, (device / 'busnum').read_text().strip(),
+                           (device / 'devnum').read_text().strip()))
+        except OSError:
+            pass
+    return found
+
+
+def select_layer(config):
+    lock_path = Path(os.environ['XDG_RUNTIME_DIR']) / 'keymapp-show.lock'
+    with lock_path.open('w') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if run('pgrep', '-u', str(os.getuid()), '-x', 'keymapp').returncode:
+            subprocess.Popen(['keymapp'], start_new_session=True)
+    result = run(KONTROLL, 'list')
+    if result.returncode:
+        return False, result.stderr.strip()
+    for line in result.stdout.splitlines():
+        match = re.match(r'\s*(\d+):\s*(.*)', line)
+        if match and 'voyager' in match[2].lower():
+            if '(connected)' not in match[2]:
+                result = run(KONTROLL, 'connect', '--index', match[1])
+                if result.returncode:
+                    return False, result.stderr.strip()
+            result = run(KONTROLL, 'set-layer', '--index', str(config['layer']))
+            return result.returncode == 0, result.stderr.strip()
+    return False, 'Waiting for Voyager in Keymapp'
+
+
+def main():
+    config = json.loads(CONFIG.read_text())
+    done = set()
+    previous = set()
+    next_try = 0
+    attempts = 0
+    print(f"Watching for Voyager; target layer {config['layer']}", flush=True)
+    while True:
+        current = devices(config)
+        done.intersection_update(current)
+        if current != previous:
+            if current - previous:
+                print('Voyager connected; waiting for Keymapp API', flush=True)
+            if previous - current:
+                print('Voyager disconnected', flush=True)
+            previous = current
+            next_try = 0
+            attempts = 0
+        if current - done and time.monotonic() >= next_try:
+            ok, error = select_layer(config)
+            if ok:
+                done.update(current)
+                print(f"Voyager switched to layer {config['layer']}", flush=True)
+            else:
+                attempts += 1
+                if attempts in (1, 15) or attempts % 30 == 0:
+                    print(f'Waiting: {error}', flush=True)
+                next_try = time.monotonic() + (2 if attempts < 15 else 30)
+        time.sleep(0.5)
+
+
+if __name__ == '__main__':
+    main()
