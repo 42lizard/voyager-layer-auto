@@ -8,8 +8,9 @@ starts Keymapp when the Voyager appears, waits for its API, and selects your
 Linux layer once. Manual layer changes afterwards are left alone.
 
 Keymapp opens on a hidden `special:keymapp` workspace. Opening **Keymapp** from
-the application launcher reveals its existing window instead of creating
-another instance. A shared startup lock prevents the launcher and service
+the application launcher brings its existing window onto your current normal
+workspace, tiles it alongside your other windows, and focuses it. It does not
+open an overlay or create another instance. A shared startup lock prevents the launcher and service
 from starting duplicate instances at the same time.
 
 ## Requirements
@@ -61,11 +62,9 @@ Open Keymapp through the application launcher or run:
 ~/.local/bin/keymapp-show
 ```
 
-Use this command to toggle its workspace:
-
-```sh
-hyprctl eval 'hl.dispatch(hl.dsp.workspace.toggle_special("keymapp"))'
-```
+The hidden workspace is used only for background startup. Once opened from
+the launcher, Keymapp behaves like a normal tiled window. Opening it again
+brings it to the workspace on your focused monitor.
 
 Settings live in `~/.config/voyager-layer/config.json` (or `$XDG_CONFIG_HOME`):
 

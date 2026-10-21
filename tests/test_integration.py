@@ -51,29 +51,40 @@ class ConnectionTests(unittest.TestCase):
 
 
 class LauncherTests(unittest.TestCase):
-    def test_existing_hidden_window_revealed_without_launch(self):
+    def check_window(self, source_workspace, floating=False):
         module = load('keymapp-show')
         with tempfile.TemporaryDirectory() as directory, \
              patch.dict(os.environ, {'XDG_RUNTIME_DIR': directory}), \
              patch.object(module, 'state', side_effect=[
-                 [{'class': 'keymapp'}], [{'specialWorkspace': {'name': ''}}]]), \
+                 [{'focused': False, 'activeWorkspace': {'id': 8}},
+                  {'focused': True, 'activeWorkspace': {'id': 2}}],
+                 [{'class': 'keymapp', 'address': '0x123',
+                   'workspace': {'id': source_workspace}, 'floating': floating}]]), \
              patch.object(module.subprocess, 'Popen') as launch, \
              patch.object(module.subprocess, 'run') as run:
             module.main()
             launch.assert_not_called()
-            self.assertIn('toggle_special', run.call_args.args[0][-1])
+            return run.call_args.args[0][-1]
 
-    def test_visible_window_stays_visible(self):
-        module = load('keymapp-show')
-        with tempfile.TemporaryDirectory() as directory, \
-             patch.dict(os.environ, {'XDG_RUNTIME_DIR': directory}), \
-             patch.object(module, 'state', side_effect=[
-                 [{'class': 'keymapp'}], [{'specialWorkspace': {'name': 'special:keymapp'}}]]), \
-             patch.object(module.subprocess, 'Popen') as launch, \
-             patch.object(module.subprocess, 'run') as run:
-            module.main()
-            launch.assert_not_called()
-            run.assert_not_called()
+    def test_hidden_window_moves_to_focused_monitor_normal_workspace(self):
+        command = self.check_window(-98)
+        self.assertIn('workspace = "2"', command)
+        self.assertIn('address:0x123', command)
+        self.assertIn('hl.dsp.focus', command)
+        self.assertNotIn('toggle_special', command)
+
+    def test_window_on_current_workspace_is_only_focused(self):
+        command = self.check_window(2)
+        self.assertNotIn('window.move', command)
+        self.assertIn('hl.dsp.focus', command)
+
+    def test_window_on_another_normal_workspace_is_brought_here(self):
+        self.assertIn('window.move', self.check_window(5))
+
+    def test_floating_window_is_tiled(self):
+        command = self.check_window(2, floating=True)
+        self.assertIn('window.float', command)
+        self.assertIn('action = "disable"', command)
 
 
 class InstallerTests(unittest.TestCase):

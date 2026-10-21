@@ -16,15 +16,24 @@ def main():
     lock_path = Path(os.environ['XDG_RUNTIME_DIR']) / 'keymapp-show.lock'
     with lock_path.open('w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        monitor = next(m for m in state('monitors') if m['focused'])
+        workspace = monitor['activeWorkspace']['id']
         for attempt in range(100):
             windows = [w for w in state('clients') if w['class'] == 'keymapp']
             if windows:
-                visible = any(m['specialWorkspace']['name'] == 'special:keymapp'
-                              for m in state('monitors'))
-                if not visible:
-                    subprocess.run(['hyprctl', 'eval',
-                                    'hl.dispatch(hl.dsp.workspace.toggle_special("keymapp"))'],
-                                   check=True)
+                window = windows[0]
+                selector = json.dumps('address:' + window['address'])
+                commands = []
+                if window['workspace']['id'] != workspace:
+                    commands.append('hl.dispatch(hl.dsp.window.move({'
+                                    f'workspace = "{workspace}", window = {selector}, follow = false'
+                                    '}))')
+                if window['floating']:
+                    commands.append('hl.dispatch(hl.dsp.window.float({'
+                                    f'action = "disable", window = {selector}'
+                                    '}))')
+                commands.append(f'hl.dispatch(hl.dsp.focus({{window = {selector}}}))')
+                subprocess.run(['hyprctl', 'eval', '; '.join(commands)], check=True)
                 return
             if attempt == 0:
                 running = subprocess.run(['pgrep', '-u', str(os.getuid()), '-x', 'keymapp'],
