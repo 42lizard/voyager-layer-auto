@@ -51,7 +51,7 @@ class ConnectionTests(unittest.TestCase):
 
 
 class LauncherTests(unittest.TestCase):
-    def check_window(self, source_workspace, floating=False):
+    def check_window(self, source_workspace, floating=False, toggle=False):
         module = load('keymapp-show')
         with tempfile.TemporaryDirectory() as directory, \
              patch.dict(os.environ, {'XDG_RUNTIME_DIR': directory}), \
@@ -62,7 +62,7 @@ class LauncherTests(unittest.TestCase):
                    'workspace': {'id': source_workspace}, 'floating': floating}]]), \
              patch.object(module.subprocess, 'Popen') as launch, \
              patch.object(module.subprocess, 'run') as run:
-            module.main()
+            module.main(toggle=toggle)
             launch.assert_not_called()
             return run.call_args.args[0][-1]
 
@@ -85,6 +85,17 @@ class LauncherTests(unittest.TestCase):
         command = self.check_window(2, floating=True)
         self.assertIn('window.float', command)
         self.assertIn('action = "disable"', command)
+
+    def test_toggle_hides_window_on_current_workspace(self):
+        command = self.check_window(2, toggle=True)
+        self.assertIn('workspace = "special:keymapp"', command)
+        self.assertIn('follow = false', command)
+        self.assertNotIn('hl.dsp.focus', command)
+
+    def test_toggle_shows_hidden_window_in_normal_tiling(self):
+        command = self.check_window(-98, toggle=True)
+        self.assertIn('workspace = "2"', command)
+        self.assertIn('hl.dsp.focus', command)
 
 
 class InstallerTests(unittest.TestCase):

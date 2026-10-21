@@ -66,6 +66,16 @@ The hidden workspace is used only for background startup. Once opened from
 the launcher, Keymapp behaves like a normal tiled window. Opening it again
 brings it to the workspace on your focused monitor.
 
+For a single shortcut that shows and hides Keymapp, add this to your Omarchy
+`~/.config/hypr/bindings.lua` after checking that the combination is available:
+
+```lua
+o.bind("SUPER + SHIFT + K", "Show/hide Keymapp", os.getenv("HOME") .. "/.local/bin/keymapp-show --toggle")
+```
+
+This hides Keymapp when it is on your current workspace; otherwise it brings
+it into the current tiling layout. Keymapp and its API keep running while hidden.
+
 Settings live in `~/.config/voyager-layer/config.json` (or `$XDG_CONFIG_HOME`):
 
 ```json

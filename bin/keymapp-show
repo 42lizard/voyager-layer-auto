@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 """Reveal Keymapp from the app launcher without starting duplicate instances."""
 import fcntl
+import argparse
 import json
 import os
 from pathlib import Path
@@ -12,7 +13,7 @@ def state(command):
     return json.loads(subprocess.check_output(['hyprctl', command, '-j'], text=True))
 
 
-def main():
+def main(toggle=False):
     lock_path = Path(os.environ['XDG_RUNTIME_DIR']) / 'keymapp-show.lock'
     with lock_path.open('w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -23,6 +24,12 @@ def main():
             if windows:
                 window = windows[0]
                 selector = json.dumps('address:' + window['address'])
+                if toggle and window['workspace']['id'] == workspace:
+                    subprocess.run(['hyprctl', 'eval',
+                                    'hl.dispatch(hl.dsp.window.move({'
+                                    f'workspace = "special:keymapp", window = {selector}, follow = false'
+                                    '}))'], check=True)
+                    return
                 commands = []
                 if window['workspace']['id'] != workspace:
                     commands.append('hl.dispatch(hl.dsp.window.move({'
@@ -46,4 +53,6 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--toggle', action='store_true', help='Hide if on the current workspace; otherwise show')
+    main(toggle=parser.parse_args().toggle)
